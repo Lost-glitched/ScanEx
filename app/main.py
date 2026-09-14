@@ -5,9 +5,12 @@
 
 import asyncio
 import logging
+import os
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import ScanMetadata, ScanResponse
 from app.scan import scan_bytes, sniff_content_type, sniff_type
@@ -17,6 +20,24 @@ LOGGER = logging.getLogger(__name__)
 app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0")
 app.include_router(adversarial_router)
 MAX_UPLOAD_SIZE = 25 * 1024 * 1024
+
+_cors_origins = {"http://localhost:5173", "http://localhost:3000"}
+for configured_origin in os.getenv("CORS_ORIGINS", "").split(","):
+    if configured_origin.strip():
+        _cors_origins.add(configured_origin.strip())
+configured_api_url = os.getenv("VITE_API_BASE_URL", "")
+if configured_api_url:
+    parsed_api_url = urlparse(configured_api_url)
+    if parsed_api_url.scheme and parsed_api_url.netloc:
+        _cors_origins.add(f"{parsed_api_url.scheme}://{parsed_api_url.netloc}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(_cors_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _extension_type(filename: str) -> str | None:

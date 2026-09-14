@@ -1,6 +1,6 @@
 # ExposureScan
 
-ExposureScan Layer A is a standalone FastAPI baseline forensic scanner. It extracts metadata, hidden content, PII, financial identifiers, and recoverable PDF redactions without using VLMs, embeddings, or external vision models.
+ExposureScan is a local ScanEx backend and ScanX frontend for forensic file scanning. Layer A extracts metadata, hidden content, PII, financial identifiers, and recoverable PDF redactions. Layer B adds offline Ollama VLM analysis and local GeoCLIP inference for images.
 
 ## Supported files
 
@@ -11,16 +11,21 @@ ExposureScan Layer A is a standalone FastAPI baseline forensic scanner. It extra
 - PPTX presentations, including speaker notes and hidden slides
 - PDFs, including metadata, incremental-update, and redaction-failure checks
 
-## Install
+## Backend install
 
 ```powershell
 pip install -r requirements.txt
-python -m spacy download en_core_web_sm
+```
+
+The backend requires the `en_core_web_trf` spaCy model to already be installed locally. ExposureScan never downloads models at request time:
+
+```powershell
+python -m spacy download en_core_web_trf
 ```
 
 ## Run locally
 
-The scanner uses spaCy's `en_core_web_sm` model by default. Set `SPACY_MODEL=en_core_web_trf` when higher accuracy is worth the added CPU latency.
+Set `SPACY_MODEL` only when selecting another model that is already installed locally. Missing models fail clearly rather than triggering a network download.
 
 ```powershell
 .\venv\Scripts\Activate.ps1
@@ -28,6 +33,27 @@ python -m uvicorn app.main:app --reload
 ```
 
 The API is available at `http://127.0.0.1:8000` and interactive docs are at `/docs`.
+
+## Frontend
+
+The ScanX frontend lives in `frontend/` and calls the backend through `VITE_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`.
+
+Run both servers in separate terminals:
+
+```powershell
+run-dev.bat
+```
+
+Or start them manually:
+
+```powershell
+cd frontend
+npm install
+copy .env.example .env.local
+npm run dev
+```
+
+The frontend supports the real baseline and adversarial scan endpoints. Resolve, commit, scan history, authentication, and server-backed report export remain Phase 2 capabilities; see [frontend/README.md](frontend/README.md).
 
 ## Baseline scan
 

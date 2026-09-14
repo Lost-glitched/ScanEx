@@ -32,6 +32,9 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+node_modules/
+frontend/.env.local
+frontend/.env.*.local
 
 # Uploaded or temporary scan files
 uploads/

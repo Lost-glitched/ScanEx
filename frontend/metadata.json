@@ -1,0 +1,6 @@
+{
+  "name": "ScanX - Sensitive Data Screening & Redaction",
+  "description": "Enterprise document screening pipeline that identifies, inspects, and sanitizes sensitive tokens, credentials, and PII before model ingestion or storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
