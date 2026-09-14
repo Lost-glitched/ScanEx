@@ -11,9 +11,11 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.models import ScanMetadata, ScanResponse
 from app.scan import scan_bytes, sniff_content_type, sniff_type
+from app.adversarial_router import router as adversarial_router
 
 LOGGER = logging.getLogger(__name__)
 app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0")
+app.include_router(adversarial_router)
 
 
 def _extension_type(filename: str) -> str | None:
