@@ -86,7 +86,11 @@ describe('ScreenPipeline multi-file scanning regression', () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<TestHarness />);
+      root.render(
+        <React.StrictMode>
+          <TestHarness />
+        </React.StrictMode>
+      );
     });
 
     const startTime = Date.now();

@@ -21,6 +21,16 @@ class Convergence(BaseModel):
     explanation: str
 
 
+class Association(BaseModel):
+    """A cross-type PERSON -> ORG heuristic inference."""
+
+    person_text: str
+    org_text: str
+    org_filename: str
+    explanation: str
+    confidence_label: str = "low"  # always "low" — heuristic, not evidence
+
+
 class MosaicFilePayload(BaseModel):
     """Per-file input result containing Layer A baseline and optional Layer B adversarial data."""
 
@@ -39,6 +49,7 @@ class MosaicResult(BaseModel):
     """Aggregate output of the cross-file correlation pass."""
 
     convergences: list[Convergence] = Field(default_factory=list)
+    possible_associations: list[Association] = Field(default_factory=list)
     mosaic_score: float = 0.0
     file_count: int = 0
     error: str | None = None

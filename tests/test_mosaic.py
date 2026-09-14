@@ -248,3 +248,87 @@ def test_mosaic_endpoint_success() -> None:
     assert data["convergences"][0]["representative_text"] == "alice@example.com"
     assert data["convergences"][0]["priority"] == "medium"
     assert data["mosaic_score"] == 4.0  # 2.0 (medium) * 2 files
+    assert "possible_associations" in data
+
+
+def test_possible_association_single_person_and_org() -> None:
+    """A batch with 1 distinct PERSON in file A and 1 ORG in file B yields 0 convergences and 1 association."""
+
+    file_a = MosaicFilePayload(
+        filename="bio.pdf",
+        scan=_sample_scan(
+            "bio.pdf",
+            findings=[Finding(entity_type="PERSON", text="Jane Doe", confidence=0.9, priority="low")],
+        ),
+    )
+    file_b = MosaicFilePayload(
+        filename="org_chart.pdf",
+        scan=_sample_scan(
+            "org_chart.pdf",
+            findings=[Finding(entity_type="ORG", text="Globex Corp", confidence=0.95, priority="low")],
+        ),
+    )
+
+    result = build_mosaic_report([file_a, file_b])
+    # Zero convergences because no entity is repeated across files
+    assert len(result.convergences) == 0
+    # Mosaic score must stay 0.0 (associations do NOT affect the score)
+    assert result.mosaic_score == 0.0
+
+    # Exactly 1 possible association
+    assert len(result.possible_associations) == 1
+    assoc = result.possible_associations[0]
+    assert assoc.person_text == "Jane Doe"
+    assert "Globex" in assoc.org_text
+    assert assoc.org_filename == "org_chart.pdf"
+    assert assoc.confidence_label == "low"
+    assert "Jane Doe is the only identified individual in this batch" in assoc.explanation
+    assert "suggesting a possible association" in assoc.explanation
+
+
+def test_ambiguity_guard_zero_associations_when_multiple_people() -> None:
+    """Ambiguity guard: when 2 distinct people exist in the batch, zero associations are emitted."""
+
+    file_a = MosaicFilePayload(
+        filename="person1.pdf",
+        scan=_sample_scan(
+            "person1.pdf",
+            findings=[Finding(entity_type="PERSON", text="Alice Green", confidence=0.9, priority="low")],
+        ),
+    )
+    file_b = MosaicFilePayload(
+        filename="person2.pdf",
+        scan=_sample_scan(
+            "person2.pdf",
+            findings=[
+                Finding(entity_type="PERSON", text="Bob Brown", confidence=0.9, priority="low"),
+                Finding(entity_type="ORG", text="Acme Corp", confidence=0.9, priority="low"),
+            ],
+        ),
+    )
+
+    result = build_mosaic_report([file_a, file_b])
+    assert len(result.possible_associations) == 0
+
+
+def test_ambiguity_guard_zero_associations_when_no_people() -> None:
+    """Ambiguity guard: when no PERSON entities exist in the batch, zero associations are emitted."""
+
+    file_a = MosaicFilePayload(
+        filename="memo.pdf",
+        scan=_sample_scan(
+            "memo.pdf",
+            findings=[Finding(entity_type="ORG", text="Acme Corp", confidence=0.9, priority="low")],
+        ),
+    )
+    file_b = MosaicFilePayload(
+        filename="locations.pdf",
+        scan=_sample_scan(
+            "locations.pdf",
+            findings=[Finding(entity_type="LOCATION", text="Bangalore", confidence=0.9, priority="low")],
+        ),
+    )
+
+    result = build_mosaic_report([file_a, file_b])
+    assert len(result.possible_associations) == 0
+

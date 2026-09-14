@@ -13,7 +13,7 @@ import re
 from typing import Any, Literal
 import networkx as nx
 
-from app.mosaic_models import Convergence, MosaicFilePayload, MosaicResult
+from app.mosaic_models import Association, Convergence, MosaicFilePayload, MosaicResult
 from app.priority import Priority, max_priority, priority_for_entity
 from app.models import ScanResponse
 from app.adversarial_router import AdversarialResponse
@@ -288,6 +288,57 @@ def build_mosaic_graph(convergences: list[Convergence], filenames: list[str]) ->
     return graph
 
 
+def find_possible_associations(entities: list[CorrelationEntity]) -> list[Association]:
+    """Identify cross-type PERSON -> ORG associations when exactly one distinct person exists in the batch.
+
+    Ambiguity Guard:
+    Only generate a PERSON -> ORG association when the entire batch contains exactly
+    one distinct normalized PERSON entity total (across all files and layers).
+    If the batch contains zero or more than one distinct person, do not generate any
+    associations — avoid combinatorial guessing between multiple candidates or ungrounded inferences.
+    """
+    person_entities: dict[str, list[CorrelationEntity]] = {}
+    for e in entities:
+        if e.entity_type == "PERSON":
+            person_entities.setdefault(e.normalized_key, []).append(e)
+
+    # Scoping rule: exactly one distinct normalized PERSON entity in the entire batch
+    if len(person_entities) != 1:
+        # If the batch has zero or more than one distinct person, do not generate
+        # any associations — say so in a comment in the code, don't silently guess between multiple candidates.
+        return []
+
+    person_cluster = next(iter(person_entities.values()))
+    person_text = max((e.raw_text for e in person_cluster), key=len)
+    person_files = {e.source_filename for e in person_cluster}
+
+    # Group ORGs by (normalized_key, source_filename) for files other than the person's own files
+    org_by_file: dict[tuple[str, str], list[CorrelationEntity]] = {}
+    for e in entities:
+        if e.entity_type == "ORG" and e.source_filename not in person_files:
+            org_by_file.setdefault((e.normalized_key, e.source_filename), []).append(e)
+
+    associations: list[Association] = []
+    for (_org_key, org_filename), org_cluster in org_by_file.items():
+        org_text = max((e.raw_text for e in org_cluster), key=len)
+        explanation = (
+            f"{person_text} is the only identified individual in this batch; "
+            f"'{org_text}' appears separately in {org_filename}, suggesting a possible association "
+            f"(e.g. employment) — not confirmed by direct evidence."
+        )
+        associations.append(
+            Association(
+                person_text=person_text,
+                org_text=org_text,
+                org_filename=org_filename,
+                explanation=explanation,
+                confidence_label="low",
+            )
+        )
+
+    return associations
+
+
 def build_mosaic_report(files: list[MosaicFilePayload]) -> MosaicResult:
     """Correlate entities and locations across all files to produce the MosaicResult."""
 
@@ -330,9 +381,14 @@ def build_mosaic_report(files: list[MosaicFilePayload]) -> MosaicResult:
     filenames = [f.filename for f in files]
     build_mosaic_graph(all_convergences, filenames)
 
+    # 6. Find cross-type PERSON -> ORG possible associations (hedged, not in mosaic_score)
+    possible_associations = find_possible_associations(all_entities)
+
     return MosaicResult(
         convergences=all_convergences,
+        possible_associations=possible_associations,
         mosaic_score=score,
         file_count=len(files),
         error=None,
     )
+

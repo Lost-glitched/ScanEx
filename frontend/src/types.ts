@@ -84,6 +84,14 @@ export interface Convergence {
   explanation: string;
 }
 
+export interface Association {
+  person_text: string;
+  org_text: string;
+  org_filename: string;
+  explanation: string;
+  confidence_label: string;
+}
+
 export interface MosaicFilePayload {
   filename: string;
   scan: ScanResponse;
@@ -92,6 +100,7 @@ export interface MosaicFilePayload {
 
 export interface MosaicResult {
   convergences: Convergence[];
+  possible_associations?: Association[];
   mosaic_score: number;
   file_count: number;
   error: string | null;

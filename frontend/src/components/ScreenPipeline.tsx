@@ -15,7 +15,8 @@ interface ScreenPipelineProps {
 function isImage(file: StagedFile): boolean { return file.category === 'image'; }
 
 export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, onResults, onFileStatus, onProceedToAudit, onCancelScan }) => {
-  const [started, setStarted] = useState(false);
+  const isMountedRef = useRef(true);
+  const isScanningRef = useRef(false);
   const scanBatchRef = useRef<StagedFile[] | null>(null);
   const onFileStatusRef = useRef(onFileStatus);
   onFileStatusRef.current = onFileStatus;
@@ -23,36 +24,42 @@ export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, 
   onResultsRef.current = onResults;
 
   useEffect(() => {
-    if (started || files.length === 0) return;
-    setStarted(true);
-    if (!scanBatchRef.current) {
-      scanBatchRef.current = files;
-    }
-    let cancelled = false;
+    isMountedRef.current = true;
+    if (isScanningRef.current || files.length === 0) return;
+    isScanningRef.current = true;
+    scanBatchRef.current = files;
+
     const scanFiles = async () => {
       const completed: FileScanResult[] = [];
-      for (const stagedFile of scanBatchRef.current ?? []) {
-        if (cancelled) return;
-        onFileStatusRef.current(stagedFile.id, 'scanning');
-        try {
-          const baseline = await scanBaseline(stagedFile.file);
-          const adversarial = isImage(stagedFile) ? await scanAdversarial(stagedFile.file) : null;
-          const error = baseline.error || adversarial?.error || null;
-          const result = { stagedFile: { ...stagedFile, status: error ? 'error' : 'complete', error: error || undefined }, baseline, adversarial, error } satisfies FileScanResult;
-          completed.push(result);
-          onResultsRef.current([...completed]);
-          onFileStatusRef.current(stagedFile.id, error ? 'error' : 'complete', error || undefined);
-        } catch (error) {
-          const message = error instanceof ScanClientError ? error.message : 'The scan failed unexpectedly.';
-          const result = { stagedFile: { ...stagedFile, status: 'error', error: message }, baseline: null, adversarial: null, error: message } satisfies FileScanResult;
-          completed.push(result);
-          onResultsRef.current([...completed]);
-          onFileStatusRef.current(stagedFile.id, 'error', message);
+      try {
+        for (const stagedFile of scanBatchRef.current ?? []) {
+          if (!isMountedRef.current) return;
+          onFileStatusRef.current(stagedFile.id, 'scanning');
+          try {
+            const baseline = await scanBaseline(stagedFile.file);
+            if (!isMountedRef.current) return;
+            const adversarial = isImage(stagedFile) ? await scanAdversarial(stagedFile.file) : null;
+            if (!isMountedRef.current) return;
+            const error = baseline.error || adversarial?.error || null;
+            const result = { stagedFile: { ...stagedFile, status: error ? 'error' : 'complete', error: error || undefined }, baseline, adversarial, error } satisfies FileScanResult;
+            completed.push(result);
+            onResultsRef.current([...completed]);
+            onFileStatusRef.current(stagedFile.id, error ? 'error' : 'complete', error || undefined);
+          } catch (error) {
+            if (!isMountedRef.current) return;
+            const message = error instanceof ScanClientError ? error.message : 'The scan failed unexpectedly.';
+            const result = { stagedFile: { ...stagedFile, status: 'error', error: message }, baseline: null, adversarial: null, error: message } satisfies FileScanResult;
+            completed.push(result);
+            onResultsRef.current([...completed]);
+            onFileStatusRef.current(stagedFile.id, 'error', message);
+          }
         }
+      } finally {
+        isScanningRef.current = false;
       }
     };
     void scanFiles();
-    return () => { cancelled = true; };
+    return () => { isMountedRef.current = false; };
   }, []);
 
   const completedCount = results.length;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, FileText, Globe, Layers, Network, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileText, Globe, HelpCircle, Layers, Network, ShieldAlert } from 'lucide-react';
 import type { Convergence, MosaicResult, Priority } from '../types';
 
 interface MosaicPanelProps {
@@ -14,7 +14,7 @@ const PRIORITY_BADGE: Record<Priority, string> = {
 };
 
 export const MosaicPanel: React.FC<MosaicPanelProps> = ({ result, onClose }) => {
-  const { convergences, mosaic_score, file_count } = result;
+  const { convergences, possible_associations = [], mosaic_score, file_count } = result;
 
   const scoreLevel = mosaic_score >= 6 ? 'High Mosaic Exposure' : mosaic_score > 0 ? 'Moderate Mosaic Exposure' : 'Isolated Batch Exposure';
   const scoreBadgeColor = mosaic_score >= 6 ? 'text-[#991b1b] bg-[#fef2f2] border-[#fecaca]' : mosaic_score > 0 ? 'text-[#854d0e] bg-[#fefce8] border-[#fef08a]' : 'text-[#166534] bg-[#f0fdf4] border-[#bbf7d0]';
@@ -121,6 +121,61 @@ export const MosaicPanel: React.FC<MosaicPanelProps> = ({ result, onClose }) => 
                       {file}
                     </span>
                   ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {possible_associations.length > 0 && (
+        <div className="space-y-3 pt-2 border-t border-[#f0eee9]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-[#717971] uppercase tracking-wider">
+                Possible Associations (unconfirmed)
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#f5f5f4] text-[#717971] border border-[#e7e5e4]">
+                {possible_associations.length}
+              </span>
+            </div>
+            <span className="text-xs text-[#a8a29e] flex items-center gap-1">
+              <HelpCircle className="w-3.5 h-3.5" />
+              Cross-type heuristic inference
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {possible_associations.map((assoc, idx) => (
+              <div
+                key={`${assoc.person_text}-${assoc.org_text}-${assoc.org_filename}-${idx}`}
+                className="p-4 rounded-xl border border-dashed border-[#d6d3d1] bg-[#fafaf9]/70 hover:bg-[#fafaf9] transition-colors space-y-2.5"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-mono font-bold text-[#1f1b17]">
+                      {assoc.person_text}
+                    </span>
+                    <span className="text-xs text-[#a8a29e]">→</span>
+                    <span className="text-xs font-mono font-semibold text-[#44403c]">
+                      {assoc.org_text}
+                    </span>
+                  </div>
+                  <span className="text-[10px] uppercase font-medium px-2 py-0.5 rounded-md bg-[#f5f5f4] text-[#78716c] border border-[#e7e5e4] shrink-0">
+                    {assoc.confidence_label} confidence
+                  </span>
+                </div>
+
+                <p className="text-xs text-[#57534e] leading-relaxed">
+                  {assoc.explanation}
+                </p>
+
+                <div className="pt-2 border-t border-[#e7e5e4]/60 flex items-center gap-1.5 text-[11px] text-[#717971]">
+                  <span className="text-[10px] font-semibold text-[#a8a29e] uppercase">Source File:</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-[#e7e5e4] font-mono text-[#292524]">
+                    <FileText className="w-3 h-3 text-[#a8a29e]" />
+                    {assoc.org_filename}
+                  </span>
                 </div>
               </div>
             ))}

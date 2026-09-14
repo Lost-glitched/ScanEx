@@ -80,4 +80,42 @@ describe('MosaicPanel component', () => {
     });
     container.remove();
   });
+
+  it('renders possible associations section when present and omits it when empty', async () => {
+    const withAssocResult: MosaicResult = {
+      convergences: [],
+      possible_associations: [
+        {
+          person_text: 'Jane Doe',
+          org_text: 'TechCorp',
+          org_filename: 'company_memo.pdf',
+          explanation: "Jane Doe is the only identified individual in this batch; 'TechCorp' appears separately in company_memo.pdf.",
+          confidence_label: 'low',
+        },
+      ],
+      mosaic_score: 0.0,
+      file_count: 2,
+      error: null,
+    };
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<MosaicPanel result={withAssocResult} />);
+    });
+
+    expect(container.textContent).toContain('Possible Associations (unconfirmed)');
+    expect(container.textContent).toContain('Jane Doe');
+    expect(container.textContent).toContain('TechCorp');
+    expect(container.textContent).toContain('company_memo.pdf');
+    expect(container.textContent).toContain('low confidence');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });
+
