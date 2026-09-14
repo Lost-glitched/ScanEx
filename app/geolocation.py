@@ -4,6 +4,8 @@
 """Offline GeoCLIP inference over in-memory image bytes."""
 
 from io import BytesIO
+import logging
+import time
 from threading import Lock
 
 import torch
@@ -11,6 +13,8 @@ from PIL import Image
 from geoclip import GeoCLIP
 
 GEOCLIP_CONFIDENCE_THRESHOLD = 0.15
+LOGGER = logging.getLogger("uvicorn.error")
+LOGGER.setLevel(logging.INFO)
 _MODEL: GeoCLIP | None = None
 _MODEL_LOCK = Lock()
 
@@ -29,14 +33,18 @@ def get_model() -> GeoCLIP:
 def infer_geolocation(image: bytes) -> dict[str, float] | None:
     """Return the top GeoCLIP coordinate only when confidence clears the threshold."""
 
-    model = get_model()
-    with Image.open(BytesIO(image)) as source:
-        tensor = model.image_encoder.preprocess_image(source.convert("RGB")).to(model.logit_scale.device)
-    with torch.no_grad():
-        probabilities = model.forward(tensor, model.gps_gallery).softmax(dim=-1)
-        top = torch.topk(probabilities, 1, dim=1)
-    confidence = float(top.values[0, 0].detach().cpu())
-    if confidence <= GEOCLIP_CONFIDENCE_THRESHOLD:
-        return None
-    coordinates = model.gps_gallery[top.indices[0, 0]].detach().cpu()
-    return {"lat": float(coordinates[0]), "lon": float(coordinates[1]), "confidence": confidence}
+    started_at = time.perf_counter()
+    try:
+        model = get_model()
+        with Image.open(BytesIO(image)) as source:
+            tensor = model.image_encoder.preprocess_image(source.convert("RGB")).to(model.logit_scale.device)
+        with torch.no_grad():
+            probabilities = model.forward(tensor, model.gps_gallery).softmax(dim=-1)
+            top = torch.topk(probabilities, 1, dim=1)
+        confidence = float(top.values[0, 0].detach().cpu())
+        if confidence <= GEOCLIP_CONFIDENCE_THRESHOLD:
+            return None
+        coordinates = model.gps_gallery[top.indices[0, 0]].detach().cpu()
+        return {"lat": float(coordinates[0]), "lon": float(coordinates[1]), "confidence": confidence}
+    finally:
+        LOGGER.info("infer_geolocation took %.1fs", time.perf_counter() - started_at)

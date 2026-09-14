@@ -7,13 +7,15 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 from urllib.parse import urlparse
 
 import ollama
 from pydantic import BaseModel, Field, ValidationError
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("uvicorn.error")
+LOGGER.setLevel(logging.INFO)
 OLLAMA_LOCAL_HOST = "http://localhost:11434"
 PRIMARY_MODEL = "qwen2.5vl:7b"
 FALLBACK_MODEL = "moondream:1.8b"
@@ -69,6 +71,13 @@ class Observation(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class VLMPayload(BaseModel):
+    """Raw shape returned by the model before server metadata is attached."""
+
+    observations: list[Observation]
+    identity_risk_level: str = Field(pattern="^(low|medium|high)$")
+
+
 class VLMAnalysis(BaseModel):
     """Validated VLM analysis returned to the API."""
 
@@ -104,22 +113,30 @@ def _response_content(response: Any) -> str:
 def _call_model(model: str, image: bytes) -> VLMAnalysis:
     """Call one local Ollama vision model and validate its JSON response."""
 
-    response = CLIENT.chat(model=model, messages=[{"role": "system", "content": VLM_SYSTEM_PROMPT}, {"role": "user", "content": "Analyze this image for incidental identity and privacy clues.", "images": [image]}], format="json")
+    started_at = time.perf_counter()
     try:
-        payload = json.loads(_response_content(response))
-        analysis = VLMAnalysis.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise ValueError("Ollama returned invalid adversarial-analysis JSON.") from exc
-    return analysis.model_copy(update={"model_used": model})
+        response = CLIENT.chat(model=model, messages=[{"role": "system", "content": VLM_SYSTEM_PROMPT}, {"role": "user", "content": "Analyze this image for incidental identity and privacy clues.", "images": [image]}], format="json", options={"num_predict": 2048})
+        try:
+            raw_content = _response_content(response)
+            payload = json.loads(raw_content)
+            parsed = VLMPayload.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            if isinstance(exc, json.JSONDecodeError):
+                LOGGER.debug("Invalid JSON from %s (first 2000 chars): %s", model, raw_content[:2000])
+            raise ValueError("Ollama returned invalid adversarial-analysis JSON.") from exc
+        return VLMAnalysis(model_used=model, **parsed.model_dump())
+    finally:
+        LOGGER.info("%s took %.1fs", model, time.perf_counter() - started_at)
 
 
 async def analyze_with_fallback(image: bytes) -> tuple[VLMAnalysis | None, str | None]:
-    """Run Qwen first and fall back to Moondream on timeout or error."""
+    """Run Qwen first and fall back to Moondream on error."""
 
     errors: list[str] = []
-    for model, timeout in ((PRIMARY_MODEL, ADVERSARIAL_PRIMARY_TIMEOUT_SECONDS), (FALLBACK_MODEL, ADVERSARIAL_FALLBACK_TIMEOUT_SECONDS)):
+    # TEMP: timeouts removed for diagnosis, see fix-adversarial-latency-prompt.md.
+    for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
-            result = await asyncio.wait_for(asyncio.to_thread(_call_model, model, image), timeout=timeout)
+            result = await asyncio.to_thread(_call_model, model, image)
             return result, None
         except Exception as exc:
             LOGGER.exception("Local Ollama model %s failed", model)

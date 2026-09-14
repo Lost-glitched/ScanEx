@@ -15,9 +15,9 @@ export class ScanClientError extends Error {
 async function postScan<T>(path: string, file: File): Promise<T> {
   const body = new FormData();
   body.append('file', file);
-
   let response: Response;
   try {
+    // TEMP: client timeout removed for diagnosis, see fix-adversarial-latency-prompt.md.
     response = await fetch(`${API_BASE_URL}${path}`, { method: 'POST', body });
   } catch {
     throw new ScanClientError('The ScanEx backend could not be reached. Start it on port 8000 and try again.');

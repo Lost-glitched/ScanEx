@@ -3,6 +3,8 @@
 
 """FastAPI route for the independent adversarial inference layer."""
 
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -12,6 +14,7 @@ from app.adversarial import run_adversarial_scan
 from app.vlm import VLMAnalysis
 
 router = APIRouter()
+LOGGER = logging.getLogger(__name__)
 
 
 class AdversarialResponse(BaseModel):
@@ -55,5 +58,20 @@ async def adversarial_scan(file: UploadFile = File(...)) -> AdversarialResponse:
         raise HTTPException(status_code=415, detail="Unsupported image type. Supported types are JPG, JPEG, PNG, and HEIC.")
     if content_type is None or (extension_type in {"jpg", "jpeg"} and content_type != "jpg") or extension_type != "jpeg" and extension_type != content_type:
         raise HTTPException(status_code=415, detail="Image content does not match its extension or supported image type.")
-    result = await run_adversarial_scan(content)
-    return AdversarialResponse(filename=filename, **result)
+    started_at = time.perf_counter()
+    try:
+        # TEMP: request timeout removed for diagnosis, see fix-adversarial-latency-prompt.md.
+        result = await run_adversarial_scan(content)
+        LOGGER.info(
+            "Adversarial scan completed for %s in %.2fs",
+            filename,
+            time.perf_counter() - started_at,
+        )
+        return AdversarialResponse(filename=filename, **result)
+    except Exception:
+        elapsed = time.perf_counter() - started_at
+        LOGGER.exception("Adversarial scan failed for %s after %.2fs", filename, elapsed)
+        return AdversarialResponse(
+            filename=filename,
+            error="Adversarial scan failed while running local inference.",
+        )
