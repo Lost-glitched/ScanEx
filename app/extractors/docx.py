@@ -5,6 +5,7 @@
 
 from datetime import datetime
 from io import BytesIO
+from xml.etree import ElementTree
 from zipfile import ZipFile
 
 from docx import Document
@@ -23,7 +24,10 @@ def extract(content: bytes) -> ExtractionResult:
 
     document = Document(BytesIO(content))
     result = ExtractionResult()
-    result.text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    result.text = "\n".join(
+        "".join(run.text or "" for run in paragraph.runs if run.font.hidden is not True)
+        for paragraph in document.paragraphs
+    )
     properties = document.core_properties
     result.metadata.author = properties.author or None
     result.metadata.last_modified_by = properties.last_modified_by or None
@@ -31,6 +35,17 @@ def extract(content: bytes) -> ExtractionResult:
     result.metadata.hidden_content.append({"type": "revision", "location": "core_properties.revision", "summary": str(properties.revision)})
     with ZipFile(BytesIO(content)) as archive:
         xml = archive.read("word/document.xml").decode("utf-8", errors="ignore")
+        document_root = ElementTree.fromstring(xml)
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        hidden_text = "".join(
+            text_node.text or ""
+            for run in document_root.findall(".//w:r", namespace)
+            if run.find("w:rPr/w:vanish", namespace) is not None
+            for text_node in run.findall(".//w:t", namespace)
+        )
+        if hidden_text and hidden_text not in result.text:
+            result.metadata.hidden_content.append({"type": "hidden_text_run", "location": "word/document.xml", "summary": hidden_text})
+            result.severity_flags.append("hidden_text_run")
         authors = set()
         for marker in ("w:ins w:author=\"", "w:del w:author=\""):
             remainder = xml

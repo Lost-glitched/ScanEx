@@ -16,6 +16,7 @@ from app.adversarial_router import router as adversarial_router
 LOGGER = logging.getLogger(__name__)
 app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0")
 app.include_router(adversarial_router)
+MAX_UPLOAD_SIZE = 25 * 1024 * 1024
 
 
 def _extension_type(filename: str) -> str | None:
@@ -37,6 +38,8 @@ async def baseline_scan(file: UploadFile = File(...)) -> ScanResponse | Any:
 
     filename = file.filename or "unnamed"
     content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="Uploaded file exceeds the 25 MB size limit.")
     extension_type = _extension_type(filename)
     detected_type = sniff_type(content, filename)
     if not extension_type:

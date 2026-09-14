@@ -22,6 +22,10 @@ def extract(content: bytes) -> ExtractionResult:
     """Extract GPS, device, time, and editing-history EXIF tags."""
 
     result = ExtractionResult()
+    if len(content) > 12 and content[4:8] == b"ftyp" and content[8:12] in {b"heic", b"heix", b"mif1", b"hevc"}:
+        result.metadata.hidden_content.append({"type": "heic_exif_extraction_unsupported", "location": "HEIF container", "summary": "HEIC is detected, but EXIF extraction requires a HEIF decoder."})
+        result.severity_flags.append("heic_exif_extraction_unsupported")
+        return result
     tags = exifread.process_file(BytesIO(content), details=False)
     result.text = " ".join(str(value) for value in tags.values())
     make = tags.get("Image Make")

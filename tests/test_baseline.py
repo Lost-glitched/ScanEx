@@ -4,6 +4,7 @@
 """Focused endpoint and recognizer tests using small generated real files."""
 
 from io import BytesIO
+from zipfile import ZipFile
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from pypdf.generic import DecodedStreamObject, NameObject
 from pytest import approx
 
 from app.main import app
+from app.extractors import image
 from app.scan import mask_financial_text
 
 
@@ -41,6 +43,22 @@ def _authored_docx_bytes() -> bytes:
     stream = BytesIO()
     document.save(stream)
     return stream.getvalue()
+
+
+def _hidden_text_docx_bytes() -> bytes:
+    """Create a DOCX containing a literal Word hidden-text run."""
+
+    source = _docx_bytes("Visible report")
+    output = BytesIO()
+    with ZipFile(BytesIO(source)) as source_archive, ZipFile(output, "w") as output_archive:
+        for item in source_archive.infolist():
+            data = source_archive.read(item.filename)
+            if item.filename == "word/document.xml":
+                xml = data.decode("utf-8")
+                hidden_run = '<w:r><w:rPr><w:vanish/></w:rPr><w:t>SECRET</w:t></w:r>'
+                data = xml.replace("</w:p>", hidden_run + "</w:p>").encode("utf-8")
+            output_archive.writestr(item, data)
+    return output.getvalue()
 
 
 def _gps_jpeg_bytes() -> bytes:
@@ -104,12 +122,30 @@ def test_image_gps_and_device_metadata_are_extracted() -> None:
     assert body["metadata"]["device"] == "Canon Test Camera"
 
 
+def test_heic_exif_support_is_reported_explicitly() -> None:
+    """HEIC containers do not silently appear clean without a HEIF decoder."""
+
+    result = image.extract(b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00")
+    assert "heic_exif_extraction_unsupported" in result.severity_flags
+    assert result.metadata.hidden_content[0]["type"] == "heic_exif_extraction_unsupported"
+
+
 def test_docx_author_mismatch_is_flagged() -> None:
     """A core author absent from visible text is reported as a leak signal."""
 
     response = client.post("/scan/baseline", files={"file": ("evidence.docx", _authored_docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert response.status_code == 200
     assert "author_visible_text_mismatch" in response.json()["severity_flags"]
+
+
+def test_docx_hidden_text_run_is_reported() -> None:
+    """Literal w:vanish text is reported when absent from visible text."""
+
+    response = client.post("/scan/baseline", files={"file": ("evidence.docx", _hidden_text_docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    body = response.json()
+    assert "hidden_text_run" in body["severity_flags"]
+    assert any(item["type"] == "hidden_text_run" and item["summary"] == "SECRET" for item in body["metadata"]["hidden_content"])
 
 
 def test_pdf_redaction_failure_recovers_text() -> None:
@@ -124,7 +160,8 @@ def test_pdf_redaction_failure_recovers_text() -> None:
 def test_financial_values_are_masked_for_display() -> None:
     """Financial values are masked before appearing in the public response."""
 
-    response = client.post("/scan/baseline", files={"file": ("evidence.docx", _docx_bytes("PAN ABCDE1234F Aadhaar 2345 6789 0124 and UPI user@ybl"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    financial_text = "PAN ABCDE1234F Aadhaar 2345 6789 0124 and UPI user@ybl"
+    response = client.post("/scan/baseline", files={"file": ("evidence.docx", _docx_bytes(financial_text), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert response.status_code == 200
     body = response.json()
     assert any(item["entity_type"] == "FIN_PAN_CARD" for item in body["financial_findings"])
@@ -132,6 +169,7 @@ def test_financial_values_are_masked_for_display() -> None:
     assert any(item["entity_type"] == "FIN_UPI_ID" for item in body["financial_findings"])
     assert any(item["entity_type"] == "FIN_AADHAAR" for item in body["financial_findings"])
     assert "2345 6789 0124" not in response.text
+    assert all(value not in response.text for value in ("ABCDE1234F", "2345 6789 0124", "user@ybl"))
 
 
 def test_random_number_is_not_aadhaar() -> None:
@@ -150,6 +188,14 @@ def test_unsupported_and_corrupt_files() -> None:
     assert unsupported.status_code == 415
     assert corrupt.status_code == 200
     assert corrupt.json()["error"]
+
+
+def test_upload_size_limit() -> None:
+    """Oversized uploads are rejected before scanning."""
+
+    response = client.post("/scan/baseline", files={"file": ("evidence.pdf", b"0" * (25 * 1024 * 1024 + 1), "application/pdf")})
+    assert response.status_code == 413
+    assert "25 MB" in response.json()["detail"]
 
 
 def test_mask_shape() -> None:

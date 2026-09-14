@@ -4,15 +4,23 @@ ExposureScan Layer A is a standalone FastAPI baseline forensic scanner. It extra
 
 ## Supported files
 
-- JPEG, PNG, and HEIC images
+- JPEG and PNG images
+- HEIC containers are recognized, but EXIF extraction is reported as unsupported without a HEIF decoder
 - DOCX documents
 - XLSX spreadsheets, including hidden and very-hidden sheets
 - PPTX presentations, including speaker notes and hidden slides
 - PDFs, including metadata, incremental-update, and redaction-failure checks
 
+## Install
+
+```powershell
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
+
 ## Run locally
 
-The project expects the dependencies listed in the project environment, including spaCy's `en_core_web_trf` model.
+The scanner uses spaCy's `en_core_web_sm` model by default. Set `SPACY_MODEL=en_core_web_trf` when higher accuracy is worth the added CPU latency.
 
 ```powershell
 .\venv\Scripts\Activate.ps1
@@ -29,6 +37,8 @@ curl.exe -X POST http://127.0.0.1:8000/scan/baseline `
 ```
 
 The endpoint returns a strict baseline result containing metadata, general PII findings, masked financial findings, redaction failures, and severity flags. Financial values are kept unmasked only inside the server-side scan operation; dashboard-facing responses mask them.
+
+Uploads larger than 25 MB are rejected with HTTP 413.
 
 Unsupported or content-mismatched files return HTTP 415. Corrupt or password-protected supported files return HTTP 200 with an `error` field so this layer can act as the system fallback.
 

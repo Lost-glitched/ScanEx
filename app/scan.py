@@ -4,6 +4,7 @@
 """Content sniffing, extraction dispatch, Presidio analysis, and masking."""
 
 import re
+import os
 from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
@@ -60,13 +61,26 @@ def _analyzer() -> AnalyzerEngine:
 
     global _ANALYZER
     if _ANALYZER is None:
-        nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_trf"}])
+        model_name = os.getenv("SPACY_MODEL", "en_core_web_trf")
+        if not spacy.util.is_package(model_name):
+            raise RuntimeError(f"spaCy model '{model_name}' is not installed locally. ExposureScan runs fully offline and will not auto-download models. Install it first with: python -m spacy download {model_name}")
+        nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": model_name}])
         registry = RecognizerRegistry()
         registry.load_predefined_recognizers()
         for recognizer in build_financial_recognizers():
             registry.add_recognizer(recognizer)
         _ANALYZER = AnalyzerEngine(nlp_engine=nlp_engine, registry=registry)
     return _ANALYZER
+
+
+def _financial_entity_type(text: str) -> str | None:
+    """Return the custom financial entity matching an analyzer finding."""
+
+    for recognizer in build_financial_recognizers():
+        for pattern in recognizer.patterns:
+            if re.fullmatch(pattern.regex, text) and recognizer.validate_result(text) is not False:
+                return recognizer.supported_entities[0]
+    return None
 
 
 def _findings(result: ExtractionResult) -> tuple[list[Finding], list[Finding]]:
@@ -77,7 +91,11 @@ def _findings(result: ExtractionResult) -> tuple[list[Finding], list[Finding]]:
     financial: list[Finding] = []
     for item in analyzer_results:
         finding = Finding(entity_type=item.entity_type, text=result.text[item.start:item.end], confidence=float(item.score))
-        (financial if item.entity_type.startswith("FIN_") else pii).append(finding)
+        financial_entity = _financial_entity_type(finding.text)
+        if financial_entity:
+            financial.append(finding.model_copy(update={"entity_type": financial_entity}))
+        else:
+            pii.append(finding)
     cards = [item for item in analyzer_results if item.entity_type == "CREDIT_CARD"]
     for card in cards:
         nearby = result.text[max(0, card.end - 8):min(len(result.text), card.end + 8)]
