@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, CheckCircle, FileText, KeyRound, ScanLine, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Brain, CheckCircle, Eye, FileText, KeyRound, ScanLine, ShieldCheck, X } from 'lucide-react';
 import { scanAdversarial, scanBaseline, ScanClientError } from '../api/scanClient';
 import type { FileScanResult, StagedFile } from '../types';
 
@@ -51,13 +51,14 @@ export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, 
   const progress = files.length === 0 ? 0 : Math.round((completedCount / files.length) * 100);
   const activeFile = files.find((file) => file.status === 'scanning') || files[completedCount] || files[files.length - 1];
   const canProceed = completedCount === files.length && files.length > 0;
-  const findingsCount = results.reduce((sum, item) => sum + (item.baseline?.pii_findings.length || 0) + (item.baseline?.financial_findings.length || 0) + (item.baseline?.redaction_failures.length || 0), 0);
+  const findingsCount = results.reduce((sum, item) => sum + (item.baseline?.pii_findings.length || 0) + (item.baseline?.financial_findings.length || 0) + (item.baseline?.redaction_failures.length || 0) + (item.adversarial?.vlm_analysis?.observations.length || 0) + (item.adversarial?.geolocation ? 1 : 0), 0);
 
   const engines = useMemo(() => [
     { name: 'Baseline metadata', icon: <ScanLine className="w-5 h-5 text-[#57534e]" />, count: results.filter((item) => item.baseline && (item.baseline.metadata.hidden_content.length > 0 || item.baseline.metadata.gps)).length, label: 'files with metadata signals' },
     { name: 'PII findings', icon: <Brain className="w-5 h-5 text-[#316342]" />, count: results.reduce((sum, item) => sum + (item.baseline?.pii_findings.length || 0), 0), label: 'matches returned' },
     { name: 'Financial findings', icon: <KeyRound className="w-5 h-5 text-[#b45309]" />, count: results.reduce((sum, item) => sum + (item.baseline?.financial_findings.length || 0), 0), label: 'masked matches returned' },
     { name: 'Redaction failures', icon: <ShieldCheck className="w-5 h-5 text-[#166534]" />, count: results.reduce((sum, item) => sum + (item.baseline?.redaction_failures.length || 0), 0), label: 'PDF failures returned' },
+    { name: 'Adversarial observations', icon: <Eye className="w-5 h-5 text-[#316342]" />, count: results.reduce((sum, item) => sum + (item.adversarial?.vlm_analysis?.observations.length || 0) + (item.adversarial?.geolocation ? 1 : 0), 0), label: 'identity/location clues returned' },
   ], [results]);
 
   const logs = results.flatMap((item) => {
@@ -66,6 +67,10 @@ export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, 
     if (item.baseline?.pii_findings.length) lines.push(`${item.stagedFile.name}: ${item.baseline.pii_findings.length} PII findings returned`);
     if (item.baseline?.financial_findings.length) lines.push(`${item.stagedFile.name}: ${item.baseline.financial_findings.length} masked financial findings returned`);
     if (item.baseline?.redaction_failures.length) lines.push(`${item.stagedFile.name}: ${item.baseline.redaction_failures.length} redaction failures returned`);
+    if (item.adversarial) lines.push(`${item.stagedFile.name}: adversarial response received (${item.adversarial.vlm_analysis?.model_used || 'no VLM model result'})`);
+    if (item.adversarial?.vlm_analysis?.observations.length) lines.push(`${item.stagedFile.name}: ${item.adversarial.vlm_analysis.observations.length} adversarial observations returned (${item.adversarial.vlm_analysis.identity_risk_level} identity risk)`);
+    if (item.adversarial?.geolocation) lines.push(`${item.stagedFile.name}: geolocation inferred at ${item.adversarial.geolocation.lat.toFixed(4)}, ${item.adversarial.geolocation.lon.toFixed(4)}`);
+    if (item.adversarial?.error) lines.push(`${item.stagedFile.name}: adversarial error: ${item.adversarial.error}`);
     if (item.error) lines.push(`${item.stagedFile.name}: ${item.error}`);
     return lines;
   });
@@ -80,7 +85,7 @@ export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, 
         </div>
       </div>
 
-      <div className="space-y-3"><h3 className="text-xs font-semibold text-[#717971] uppercase tracking-wider px-1">Scan data returned</h3><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{engines.map((engine) => <div key={engine.name} className="bg-white border border-[#e7e5e4] rounded-2xl p-5 shadow-xs space-y-4"><div className="flex items-center justify-between"><div className="w-8 h-8 rounded-lg bg-[#fafaf9] border border-[#e7e5e4] flex items-center justify-center">{engine.icon}</div><span className="text-xs font-medium text-[#166534]">{completedCount ? 'Returned' : 'Waiting'}</span></div><div><h4 className="text-sm font-semibold text-[#1f1b17]">{engine.name}</h4><p className="text-xs text-[#717971] leading-relaxed">{engine.count} {engine.label}</p></div></div>)}</div></div>
+      <div className="space-y-3"><h3 className="text-xs font-semibold text-[#717971] uppercase tracking-wider px-1">Scan data returned</h3><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">{engines.map((engine) => <div key={engine.name} className="bg-white border border-[#e7e5e4] rounded-2xl p-5 shadow-xs space-y-4"><div className="flex items-center justify-between"><div className="w-8 h-8 rounded-lg bg-[#fafaf9] border border-[#e7e5e4] flex items-center justify-center">{engine.icon}</div><span className="text-xs font-medium text-[#166534]">{completedCount ? 'Returned' : 'Waiting'}</span></div><div><h4 className="text-sm font-semibold text-[#1f1b17]">{engine.name}</h4><p className="text-xs text-[#717971] leading-relaxed">{engine.count} {engine.label}</p></div></div>)}</div></div>
 
       <div className="bg-white border border-[#e7e5e4] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4"><div className="flex items-center justify-between pb-3 border-b border-[#f0eee9]"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500" /><span className="text-xs font-bold tracking-wider text-[#1f1b17] uppercase">Activity from responses</span></div><span className="text-xs text-[#717971]">{logs.length} lines</span></div><div className="space-y-3 font-mono text-xs">{logs.length ? logs.map((log, index) => <div key={`${log}-${index}`} className="flex items-start gap-3 text-[#292524]"><span className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 bg-slate-400" /><span className="break-words leading-relaxed">{log}</span></div>) : <p className="text-[#717971]">Waiting for the first backend response.</p>}</div></div>
 

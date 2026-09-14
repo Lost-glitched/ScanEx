@@ -86,13 +86,24 @@ def _financial_entity_type(text: str) -> str | None:
 def _findings(result: ExtractionResult) -> tuple[list[Finding], list[Finding]]:
     """Run NER and custom recognizers, including context-aware CVV detection."""
 
-    analyzer_results = _analyzer().analyze(text=result.text, language="en")
+    raw_analyzer_results = _analyzer().analyze(text=result.text, language="en")
+    analyzer_results_by_span: dict[tuple[int, int], object] = {}
+    for item in raw_analyzer_results:
+        span = (item.start, item.end)
+        current = analyzer_results_by_span.get(span)
+        if current is None or item.score > current.score:
+            analyzer_results_by_span[span] = item
+    analyzer_results = analyzer_results_by_span.values()
     pii: list[Finding] = []
     financial: list[Finding] = []
     for item in analyzer_results:
         finding = Finding(entity_type=item.entity_type, text=result.text[item.start:item.end], confidence=float(item.score))
         financial_entity = _financial_entity_type(finding.text)
         if financial_entity:
+            if financial_entity == "FIN_BANK_ACCOUNT_NUMBER":
+                nearby = result.text[max(0, item.start - 40):min(len(result.text), item.end + 40)]
+                if not re.search(r"\b(?:account|a/c|iban|bank|hdfc|icici|sbi|axis|kotak)\b", nearby, re.IGNORECASE):
+                    continue
             financial.append(finding.model_copy(update={"entity_type": financial_entity}))
         else:
             pii.append(finding)

@@ -16,7 +16,7 @@ from pypdf.generic import DecodedStreamObject, NameObject
 from pytest import approx
 
 from app.main import app
-from app.extractors import image
+from app.extractors import image, pdf
 from app.scan import mask_financial_text
 
 
@@ -59,6 +59,40 @@ def _hidden_text_docx_bytes() -> bytes:
                 data = xml.replace("</w:p>", hidden_run + "</w:p>").encode("utf-8")
             output_archive.writestr(item, data)
     return output.getvalue()
+
+
+def _tracked_change_docx_bytes() -> bytes:
+    """Create a DOCX with realistic tracked-change attribute ordering."""
+
+    source = _docx_bytes("Visible report")
+    output = BytesIO()
+    with ZipFile(BytesIO(source)) as source_archive, ZipFile(output, "w") as output_archive:
+        for item in source_archive.infolist():
+            data = source_archive.read(item.filename)
+            if item.filename == "word/document.xml":
+                xml = data.decode("utf-8")
+                revision = '<w:ins w:id="3" w:author="Tracked Author" w:date="2026-09-14T00:00:00Z"><w:r><w:t>inserted</w:t></w:r></w:ins>'
+                data = xml.replace("</w:p>", revision + "</w:p>").encode("utf-8")
+            output_archive.writestr(item, data)
+    return output.getvalue()
+
+
+def _comment_docx_bytes() -> bytes:
+        """Create a DOCX with a comment part containing known author and text."""
+
+        source = _docx_bytes("Visible report")
+        output = BytesIO()
+        comments_xml = b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:comment w:id="0" w:author="Comment Author">
+        <w:p><w:r><w:t>Review this private detail</w:t></w:r></w:p>
+    </w:comment>
+</w:comments>'''
+        with ZipFile(BytesIO(source)) as source_archive, ZipFile(output, "w") as output_archive:
+                for item in source_archive.infolist():
+                        output_archive.writestr(item, source_archive.read(item.filename))
+                output_archive.writestr("word/comments.xml", comments_xml)
+        return output.getvalue()
 
 
 def _gps_jpeg_bytes() -> bytes:
@@ -148,6 +182,24 @@ def test_docx_hidden_text_run_is_reported() -> None:
     assert any(item["type"] == "hidden_text_run" and item["summary"] == "SECRET" for item in body["metadata"]["hidden_content"])
 
 
+def test_docx_tracked_change_author_is_extracted() -> None:
+    """Tracked-change authors are extracted regardless of XML attribute order."""
+
+    response = client.post("/scan/baseline", files={"file": ("tracked.docx", _tracked_change_docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    entries = response.json()["metadata"]["hidden_content"]
+    assert any(item["type"] == "tracked_change_authors" and item["summary"] == "Tracked Author" for item in entries)
+
+
+def test_docx_comment_text_is_extracted() -> None:
+    """DOCX comments expose their author and actual text in hidden content."""
+
+    response = client.post("/scan/baseline", files={"file": ("commented.docx", _comment_docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    entries = response.json()["metadata"]["hidden_content"]
+    assert any(item["type"] == "comment" and "Comment Author" in item["summary"] and "Review this private detail" in item["summary"] for item in entries)
+
+
 def test_pdf_redaction_failure_recovers_text() -> None:
     """Text below a filled dark rectangle is returned as a redaction failure."""
 
@@ -155,6 +207,37 @@ def test_pdf_redaction_failure_recovers_text() -> None:
     assert response.status_code == 200
     failures = response.json()["redaction_failures"]
     assert failures and failures[0]["page"] == 1 and "SECRET" in failures[0]["recovered_text"]
+
+
+def test_pdf_filled_boolean_rectangle_recovers_text(monkeypatch: object) -> None:
+    """A filled rectangle with no color value still triggers recovery."""
+
+    class FakePage:
+        rects = [{"x0": 10, "top": 20, "x1": 100, "bottom": 40, "fill": True}]
+
+        def crop(self, bbox: tuple[float, float, float, float], strict: bool = False) -> "FakePage":
+            return self
+
+        def extract_text(self) -> str:
+            return "RECOVERED"
+
+    class FakePdf:
+        pages = [FakePage()]
+
+        def __enter__(self) -> "FakePdf":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class FakeReader:
+        metadata: dict[str, str] = {}
+        pages: list[object] = []
+
+    monkeypatch.setattr(pdf, "PdfReader", lambda stream: FakeReader())
+    monkeypatch.setattr(pdf.pdfplumber, "open", lambda stream: FakePdf())
+    result = pdf.extract(b"not a real pdf")
+    assert result.redaction_failures[0].recovered_text == "RECOVERED"
 
 
 def test_financial_values_are_masked_for_display() -> None:
@@ -178,6 +261,23 @@ def test_random_number_is_not_aadhaar() -> None:
     response = client.post("/scan/baseline", files={"file": ("numbers.docx", _docx_bytes("Reference 123456789012"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert response.status_code == 200
     assert not any(item["entity_type"] == "FIN_AADHAAR" for item in response.json()["financial_findings"])
+
+
+def test_bare_account_number_is_not_flagged() -> None:
+    """A long number without nearby banking context is not a bank account finding."""
+
+    response = client.post("/scan/baseline", files={"file": ("numbers.docx", _docx_bytes("Tracking reference 123456789012"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    assert not any(item["entity_type"] == "FIN_BANK_ACCOUNT_NUMBER" for item in response.json()["financial_findings"])
+
+
+def test_contextual_account_number_is_flagged_once() -> None:
+    """A long number near a bank keyword is returned once as a masked account finding."""
+
+    response = client.post("/scan/baseline", files={"file": ("account.docx", _docx_bytes("HDFC account 123456789012"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    findings = [item for item in response.json()["financial_findings"] if item["entity_type"] == "FIN_BANK_ACCOUNT_NUMBER"]
+    assert len(findings) == 1
 
 
 def test_unsupported_and_corrupt_files() -> None:

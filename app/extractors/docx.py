@@ -46,15 +46,21 @@ def extract(content: bytes) -> ExtractionResult:
         if hidden_text and hidden_text not in result.text:
             result.metadata.hidden_content.append({"type": "hidden_text_run", "location": "word/document.xml", "summary": hidden_text})
             result.severity_flags.append("hidden_text_run")
-        authors = set()
-        for marker in ("w:ins w:author=\"", "w:del w:author=\""):
-            remainder = xml
-            while marker in remainder:
-                remainder = remainder.split(marker, 1)[1]
-                authors.add(remainder.split("\"", 1)[0])
+        authors = {
+            author
+            for revision in document_root.findall(".//w:ins", namespace) + document_root.findall(".//w:del", namespace)
+            if (author := revision.get(f"{{{namespace['w']}}}author"))
+        }
         if authors:
             result.metadata.hidden_content.append({"type": "tracked_change_authors", "location": "word/document.xml", "summary": ", ".join(sorted(authors))})
-        if "commentRangeStart" in xml or "comments.xml" in archive.namelist():
+        if "word/comments.xml" in archive.namelist():
+            comments_root = ElementTree.fromstring(archive.read("word/comments.xml"))
+            comments = comments_root.findall(".//w:comment", namespace)
+            for comment in comments:
+                author = comment.get(f"{{{namespace['w']}}}author") or "Unknown author"
+                text = "".join(text_node.text or "" for text_node in comment.findall(".//w:t", namespace))
+                result.metadata.hidden_content.append({"type": "comment", "location": "word/comments.xml", "summary": f"{author}: {text}"})
+        elif "commentRangeStart" in xml:
             result.metadata.hidden_content.append({"type": "comments", "location": "word/comments.xml", "summary": "Document comments are present."})
     if result.metadata.author and result.metadata.author not in result.text:
         result.severity_flags.append("author_visible_text_mismatch")

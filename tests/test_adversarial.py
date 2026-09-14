@@ -71,7 +71,7 @@ def test_primary_model_failure_uses_fallback(monkeypatch: object) -> None:
         return _analysis(model)
 
     monkeypatch.setattr(vlm, "_call_model", fake_call)
-    result, error = asyncio.run(vlm.analyze_with_fallback(b"image"))
+    result, error = asyncio.run(vlm.analyze_with_fallback(_png_bytes()))
     assert result is not None and result.model_used == vlm.FALLBACK_MODEL
     assert error is None
     assert calls == [vlm.PRIMARY_MODEL, vlm.FALLBACK_MODEL]

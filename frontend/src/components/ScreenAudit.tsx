@@ -16,13 +16,20 @@ interface AuditFinding { id: string; fileName: string; kind: string; detail: str
 function buildFindings(results: FileScanResult[]): AuditFinding[] {
   return results.flatMap((result) => {
     const baseline = result.baseline;
-    if (!baseline) return result.error ? [{ id: `${result.stagedFile.id}-error`, fileName: result.stagedFile.name, kind: 'Scan error', detail: result.error, source: 'ScanEx response' }] : [];
+    const adversarial = result.adversarial;
+    if (!baseline && !adversarial) return result.error ? [{ id: `${result.stagedFile.id}-error`, fileName: result.stagedFile.name, kind: 'Scan error', detail: result.error, source: 'ScanEx response' }] : [];
     const findings: AuditFinding[] = [];
     const addFinding = (finding: Finding, kind: string) => findings.push({ id: `${result.stagedFile.id}-${findings.length}`, fileName: result.stagedFile.name, kind, detail: finding.text, confidence: finding.confidence, source: finding.entity_type });
-    baseline.pii_findings.forEach((finding) => addFinding(finding, 'PII finding'));
-    baseline.financial_findings.forEach((finding) => addFinding(finding, 'Financial finding'));
-    baseline.redaction_failures.forEach((failure, index) => findings.push({ id: `${result.stagedFile.id}-redaction-${index}`, fileName: result.stagedFile.name, kind: 'Redaction failure', detail: `Page ${failure.page}: ${failure.recovered_text}`, source: 'PDF redaction check' }));
-    baseline.severity_flags.forEach((flag, index) => findings.push({ id: `${result.stagedFile.id}-severity-${index}`, fileName: result.stagedFile.name, kind: 'Severity flag', detail: flag, source: 'ScanEx response' }));
+    if (baseline) {
+      baseline.pii_findings.forEach((finding) => addFinding(finding, 'PII finding'));
+      baseline.financial_findings.forEach((finding) => addFinding(finding, 'Financial finding'));
+      baseline.redaction_failures.forEach((failure, index) => findings.push({ id: `${result.stagedFile.id}-redaction-${index}`, fileName: result.stagedFile.name, kind: 'Redaction failure', detail: `Page ${failure.page}: ${failure.recovered_text}`, source: 'PDF redaction check' }));
+      baseline.severity_flags.forEach((flag, index) => findings.push({ id: `${result.stagedFile.id}-severity-${index}`, fileName: result.stagedFile.name, kind: 'Severity flag', detail: flag, source: 'ScanEx response' }));
+    }
+    adversarial?.vlm_analysis?.observations.forEach((observation) => findings.push({ id: `${result.stagedFile.id}-${findings.length}`, fileName: result.stagedFile.name, kind: `Adversarial clue (${observation.clue_type})`, detail: `${observation.description} Possible inference: ${observation.possible_inference}`, confidence: observation.confidence, source: `${adversarial.vlm_analysis?.model_used} · ${adversarial.vlm_analysis.identity_risk_level} identity risk` }));
+    if (adversarial?.geolocation) findings.push({ id: `${result.stagedFile.id}-${findings.length}`, fileName: result.stagedFile.name, kind: 'Geolocation inferred', detail: `${adversarial.geolocation.lat.toFixed(4)}, ${adversarial.geolocation.lon.toFixed(4)}`, confidence: adversarial.geolocation.confidence, source: 'GeoCLIP' });
+    adversarial?.severity_flags.forEach((flag) => findings.push({ id: `${result.stagedFile.id}-${findings.length}`, fileName: result.stagedFile.name, kind: 'Adversarial severity flag', detail: flag, source: 'Adversarial response' }));
+    if (adversarial?.error) findings.push({ id: `${result.stagedFile.id}-${findings.length}`, fileName: result.stagedFile.name, kind: 'Adversarial scan error', detail: adversarial.error, source: 'Adversarial response' });
     return findings;
   });
 }

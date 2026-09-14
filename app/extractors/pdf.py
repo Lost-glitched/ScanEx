@@ -17,6 +17,8 @@ def _dark(color: object) -> bool:
 
     if color is None:
         return False
+    if isinstance(color, bool):
+        return color
     values = color if isinstance(color, (tuple, list)) else (color,)
     try:
         return sum(float(value) for value in values[:3]) / min(3, len(values)) < 0.25

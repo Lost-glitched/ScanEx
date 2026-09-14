@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import time
+from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 
 import ollama
+from PIL import Image
 from pydantic import BaseModel, Field, ValidationError
 
 LOGGER = logging.getLogger("uvicorn.error")
@@ -21,6 +23,7 @@ PRIMARY_MODEL = "qwen2.5vl:7b"
 FALLBACK_MODEL = "moondream:1.8b"
 ADVERSARIAL_PRIMARY_TIMEOUT_SECONDS = 30.0
 ADVERSARIAL_FALLBACK_TIMEOUT_SECONDS = 15.0
+VLM_NUM_PREDICT = 768
 
 VLM_SYSTEM_PROMPT = """You are an OSINT (open-source intelligence) analyst helping a privacy audit
 tool identify what a determined observer could infer about a person or
@@ -99,6 +102,34 @@ _validate_local_ollama_host()
 CLIENT = ollama.Client(host=OLLAMA_LOCAL_HOST)
 
 
+def _prepare_image(image: bytes) -> bytes:
+    """Downscale oversized images once before sending them to a VLM."""
+
+    with Image.open(BytesIO(image)) as source:
+        original_width, original_height = source.size
+        prepared = source
+        if max(source.size) > 1024:
+            scale = 1024 / max(source.size)
+            prepared = source.resize((round(original_width * scale), round(original_height * scale)), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        output_format = "PNG" if source.format == "PNG" else "JPEG"
+        if output_format == "JPEG":
+            prepared.convert("RGB").save(output, format=output_format, quality=85)
+        else:
+            prepared.save(output, format=output_format)
+        prepared_bytes = output.getvalue()
+        LOGGER.info(
+            "VLM image %dx%d/%d bytes -> %dx%d/%d bytes",
+            original_width,
+            original_height,
+            len(image),
+            prepared.width,
+            prepared.height,
+            len(prepared_bytes),
+        )
+        return prepared_bytes
+
+
 def _response_content(response: Any) -> str:
     """Extract response text from Ollama response objects or test doubles."""
 
@@ -115,7 +146,7 @@ def _call_model(model: str, image: bytes) -> VLMAnalysis:
 
     started_at = time.perf_counter()
     try:
-        response = CLIENT.chat(model=model, messages=[{"role": "system", "content": VLM_SYSTEM_PROMPT}, {"role": "user", "content": "Analyze this image for incidental identity and privacy clues.", "images": [image]}], format="json", options={"num_predict": 2048})
+        response = CLIENT.chat(model=model, messages=[{"role": "system", "content": VLM_SYSTEM_PROMPT}, {"role": "user", "content": "Analyze this image for incidental identity and privacy clues.", "images": [image]}], format="json", options={"num_predict": VLM_NUM_PREDICT})
         try:
             raw_content = _response_content(response)
             payload = json.loads(raw_content)
@@ -134,9 +165,10 @@ async def analyze_with_fallback(image: bytes) -> tuple[VLMAnalysis | None, str |
 
     errors: list[str] = []
     # TEMP: timeouts removed for diagnosis, see fix-adversarial-latency-prompt.md.
+    prepared_image = _prepare_image(image)
     for model in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
-            result = await asyncio.to_thread(_call_model, model, image)
+            result = await asyncio.to_thread(_call_model, model, prepared_image)
             return result, None
         except Exception as exc:
             LOGGER.exception("Local Ollama model %s failed", model)
