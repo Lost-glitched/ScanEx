@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowRight, Brain, CheckCircle, Eye, FileText, KeyRound, ScanLine, ShieldCheck, X } from 'lucide-react';
 import { scanAdversarial, scanBaseline, ScanClientError } from '../api/scanClient';
 import type { FileScanResult, StagedFile } from '../types';
@@ -16,36 +16,44 @@ function isImage(file: StagedFile): boolean { return file.category === 'image'; 
 
 export const ScreenPipeline: React.FC<ScreenPipelineProps> = ({ files, results, onResults, onFileStatus, onProceedToAudit, onCancelScan }) => {
   const [started, setStarted] = useState(false);
+  const scanBatchRef = useRef<StagedFile[] | null>(null);
+  const onFileStatusRef = useRef(onFileStatus);
+  onFileStatusRef.current = onFileStatus;
+  const onResultsRef = useRef(onResults);
+  onResultsRef.current = onResults;
 
   useEffect(() => {
     if (started || files.length === 0) return;
     setStarted(true);
+    if (!scanBatchRef.current) {
+      scanBatchRef.current = files;
+    }
     let cancelled = false;
     const scanFiles = async () => {
       const completed: FileScanResult[] = [];
-      for (const stagedFile of files) {
+      for (const stagedFile of scanBatchRef.current ?? []) {
         if (cancelled) return;
-        onFileStatus(stagedFile.id, 'scanning');
+        onFileStatusRef.current(stagedFile.id, 'scanning');
         try {
           const baseline = await scanBaseline(stagedFile.file);
           const adversarial = isImage(stagedFile) ? await scanAdversarial(stagedFile.file) : null;
           const error = baseline.error || adversarial?.error || null;
           const result = { stagedFile: { ...stagedFile, status: error ? 'error' : 'complete', error: error || undefined }, baseline, adversarial, error } satisfies FileScanResult;
           completed.push(result);
-          onResults([...completed]);
-          onFileStatus(stagedFile.id, error ? 'error' : 'complete', error || undefined);
+          onResultsRef.current([...completed]);
+          onFileStatusRef.current(stagedFile.id, error ? 'error' : 'complete', error || undefined);
         } catch (error) {
           const message = error instanceof ScanClientError ? error.message : 'The scan failed unexpectedly.';
           const result = { stagedFile: { ...stagedFile, status: 'error', error: message }, baseline: null, adversarial: null, error: message } satisfies FileScanResult;
           completed.push(result);
-          onResults([...completed]);
-          onFileStatus(stagedFile.id, 'error', message);
+          onResultsRef.current([...completed]);
+          onFileStatusRef.current(stagedFile.id, 'error', message);
         }
       }
     };
     void scanFiles();
     return () => { cancelled = true; };
-  }, [files, onFileStatus, onResults, started]);
+  }, []);
 
   const completedCount = results.length;
   const progress = files.length === 0 ? 0 : Math.round((completedCount / files.length) * 100);
