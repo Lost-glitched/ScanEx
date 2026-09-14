@@ -1,6 +1,6 @@
-# ExposureScan
+# ScanEx
 
-ExposureScan is a local ScanEx backend and ScanX frontend for forensic file scanning. Layer A extracts metadata, hidden content, PII, financial identifiers, and recoverable PDF redactions. Layer B adds offline Ollama VLM analysis and local GeoCLIP inference for images.
+ScanEx is a local backend and frontend for forensic file scanning. Layer A extracts metadata, hidden content, PII, financial identifiers, and recoverable PDF redactions. Layer B adds offline Ollama VLM analysis and local GeoCLIP inference for images.
 
 ## Supported files
 
@@ -17,7 +17,7 @@ ExposureScan is a local ScanEx backend and ScanX frontend for forensic file scan
 pip install -r requirements.txt
 ```
 
-The backend requires the `en_core_web_trf` spaCy model to already be installed locally. ExposureScan never downloads models at request time:
+The backend requires the `en_core_web_trf` spaCy model to already be installed locally. ScanEx never downloads models at request time:
 
 ```powershell
 python -m spacy download en_core_web_trf
@@ -36,7 +36,7 @@ The API is available at `http://127.0.0.1:8000` and interactive docs are at `/do
 
 ## Frontend
 
-The ScanX frontend lives in `frontend/` and calls the backend through `VITE_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`.
+The ScanEx frontend lives in `frontend/` and calls the backend through `VITE_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`.
 
 Run both servers in separate terminals:
 
