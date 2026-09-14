@@ -75,3 +75,25 @@ export interface FileScanResult {
   adversarial: AdversarialResponse | null;
   error: string | null;
 }
+
+export interface Convergence {
+  entity_type: string;
+  representative_text: string;
+  source_files: string[];
+  priority: Priority;
+  explanation: string;
+}
+
+export interface MosaicFilePayload {
+  filename: string;
+  scan: ScanResponse;
+  adversarial: AdversarialResponse | null;
+}
+
+export interface MosaicResult {
+  convergences: Convergence[];
+  mosaic_score: number;
+  file_count: number;
+  error: string | null;
+}
+

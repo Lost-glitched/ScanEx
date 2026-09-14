@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, Download, FileCheck2, FileImage, FileText, Lock, RotateCcw, ShieldCheck, Unlock } from 'lucide-react';
-import type { FileScanResult, Finding, Priority } from '../types';
+import { AlertTriangle, ArrowRight, Download, FileCheck2, FileImage, FileText, Loader2, Lock, Network, RotateCcw, ShieldCheck, Unlock } from 'lucide-react';
+import { scanMosaic } from '../api/scanClient';
+import { MosaicPanel } from './MosaicPanel';
+import type { FileScanResult, Finding, MosaicResult, Priority } from '../types';
 
 interface ScreenAuditProps {
   results: FileScanResult[];
@@ -42,10 +44,35 @@ function buildFindings(results: FileScanResult[]): AuditFinding[] {
   });
   return all.sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
 }
-
-export const ScreenAudit: React.FC<ScreenAuditProps> = ({ results, resolvedIds, onToggleResolve, onExportReport, onCommitPipeline, onResetAll }) => {
+export const ScreenAudit: React.FC<ScreenAuditProps> = ({ results, resolvedIds, onToggleResolve, onExportReport, onCommitPipeline, onResetAll }) => {
   const [copiedLocation, setCopiedLocation] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<Priority | null>(null);
+  const [mosaicResult, setMosaicResult] = useState<MosaicResult | null>(null);
+  const [mosaicLoading, setMosaicLoading] = useState(false);
+  const [mosaicError, setMosaicError] = useState<string | null>(null);
+
+  const eligibleFiles = useMemo(() => results.filter((r) => r.baseline !== null), [results]);
+  const canRunMosaic = eligibleFiles.length >= 2;
+
+  const handleRunMosaic = async () => {
+    if (!canRunMosaic || mosaicLoading) return;
+    setMosaicLoading(true);
+    setMosaicError(null);
+    try {
+      const payload = eligibleFiles.map((r) => ({
+        filename: r.stagedFile.name,
+        scan: r.baseline!,
+        adversarial: r.adversarial,
+      }));
+      const res = await scanMosaic(payload);
+      setMosaicResult(res);
+    } catch (err: any) {
+      setMosaicError(err?.message || 'Failed to run mosaic correlation.');
+    } finally {
+      setMosaicLoading(false);
+    }
+  };
+
   const findings = useMemo(() => buildFindings(results), [results]);
   const filtered = priorityFilter ? findings.filter((f) => f.priority === priorityFilter) : findings;
   const pending = filtered.filter((finding) => !resolvedIds.has(finding.id));
@@ -58,9 +85,56 @@ export const ScreenAudit: React.FC<ScreenAuditProps> = ({ results, resolvedIds, 
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-300">
-      <div className="bg-[#fcf2eb] border border-[#f0e6e0] rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs"><div className="flex items-start gap-3"><div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-[#854d0e] border border-[#e7e5e4]"><AlertTriangle className="w-4 h-4" /></div><p className="text-sm font-medium text-[#1f1b17]">{results.length ? `Inspection completed for ${results.length} file${results.length === 1 ? '' : 's'}.` : 'No scan results are available yet.'}</p></div><div className="flex items-center gap-3"><button onClick={handleCopyLocation} className="text-xs text-[#717971] hover:text-[#1f1b17] cursor-pointer">{copiedLocation ? 'Copied' : 'Copy session link'}</button><span className={`px-3 py-1 rounded-full text-xs font-semibold ${allResolved ? 'bg-[#e8f5e9] text-[#166534] border border-[#bbf7d0]' : 'bg-[#fef9c3] text-[#854d0e] border border-[#fef08a]'}`}>{allResolved ? 'Locally reviewed' : 'Review needed'}</span></div></div>
+      <div className="bg-[#fcf2eb] border border-[#f0e6e0] rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-[#854d0e] border border-[#e7e5e4]"><AlertTriangle className="w-4 h-4" /></div>
+          <div>
+            <p className="text-sm font-medium text-[#1f1b17]">{results.length ? `Inspection completed for ${results.length} file${results.length === 1 ? '' : 's'}.` : 'No scan results are available yet.'}</p>
+            {results.length >= 2 && <p className="text-xs text-[#717971]">Layer C Mosaic Risk correlation is available for this batch.</p>}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            id="run-mosaic-btn"
+            disabled={!canRunMosaic || mosaicLoading}
+            onClick={handleRunMosaic}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+              canRunMosaic && !mosaicLoading
+                ? 'bg-[#316342] text-white hover:bg-[#3f6b4d] cursor-pointer shadow-xs'
+                : 'bg-[#e7e5e4] text-[#a8a29e] cursor-not-allowed'
+            }`}
+            title={canRunMosaic ? 'Correlate findings across completed batch files' : 'Requires at least 2 completed files to run cross-file correlation'}
+          >
+            {mosaicLoading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Correlating...</span>
+              </>
+            ) : (
+              <>
+                <Network className="w-3.5 h-3.5" />
+                <span>{mosaicResult ? 'Re-run Mosaic Analysis' : 'Run Mosaic Analysis'}</span>
+              </>
+            )}
+          </button>
+          <button onClick={handleCopyLocation} className="text-xs text-[#717971] hover:text-[#1f1b17] cursor-pointer">{copiedLocation ? 'Copied' : 'Copy session link'}</button>
+          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${allResolved ? 'bg-[#e8f5e9] text-[#166534] border border-[#bbf7d0]' : 'bg-[#fef9c3] text-[#854d0e] border border-[#fef08a]'}`}>{allResolved ? 'Locally reviewed' : 'Review needed'}</span>
+        </div>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6"><div className="bg-white border border-[#e7e5e4] rounded-2xl p-6 shadow-xs"><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Checked files</span><FileCheck2 className="w-4 h-4" /></div><p className="my-4 text-3xl font-bold text-[#1f1b17] font-mono">{results.length}</p><div className="text-xs text-[#717971]">{cleanFiles} without pending findings · {flaggedFiles} flagged</div></div><div className="bg-white border border-[#e7e5e4] rounded-2xl p-6 shadow-xs"><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Findings</span><ShieldCheck className="w-4 h-4" /></div><p className="my-4 text-3xl font-bold text-[#b45309] font-mono">{findings.length}</p><div className="text-xs text-[#717971]">{pending.length} pending local review</div></div><div className={`border rounded-2xl p-6 shadow-xs ${allResolved ? 'bg-[#e8f5e9]/40 border-[#bbf7d0]' : 'bg-white border-[#e7e5e4]'}`}><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Backend actions</span>{allResolved ? <Unlock className="w-4 h-4 text-[#166534]" /> : <Lock className="w-4 h-4 text-[#991b1b]" />}</div><p className={`my-4 text-lg font-bold ${allResolved ? 'text-[#166534]' : 'text-[#991b1b]'}`}>Not available</p><div className="text-xs text-[#717971]">Resolve and commit endpoints are Phase 2.</div></div></div>
+      {mosaicError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{mosaicError}</span>
+        </div>
+      )}
+
+      {mosaicResult && (
+        <MosaicPanel result={mosaicResult} onClose={() => setMosaicResult(null)} />
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+        <div className="bg-white border border-[#e7e5e4] rounded-2xl p-6 shadow-xs"><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Checked files</span><FileCheck2 className="w-4 h-4" /></div><p className="my-4 text-3xl font-bold text-[#1f1b17] font-mono">{results.length}</p><div className="text-xs text-[#717971]">{cleanFiles} without pending findings · {flaggedFiles} flagged</div></div><div className="bg-white border border-[#e7e5e4] rounded-2xl p-6 shadow-xs"><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Findings</span><ShieldCheck className="w-4 h-4" /></div><p className="my-4 text-3xl font-bold text-[#b45309] font-mono">{findings.length}</p><div className="text-xs text-[#717971]">{pending.length} pending local review</div></div><div className={`border rounded-2xl p-6 shadow-xs ${allResolved ? 'bg-[#e8f5e9]/40 border-[#bbf7d0]' : 'bg-white border-[#e7e5e4]'}`}><div className="flex items-center justify-between text-xs font-semibold text-[#a8a29e] uppercase tracking-wider"><span>Backend actions</span>{allResolved ? <Unlock className="w-4 h-4 text-[#166534]" /> : <Lock className="w-4 h-4 text-[#991b1b]" />}</div><p className={`my-4 text-lg font-bold ${allResolved ? 'text-[#166534]' : 'text-[#991b1b]'}`}>Not available</p><div className="text-xs text-[#717971]">Resolve and commit endpoints are Phase 2.</div></div></div>
 
       <div className="space-y-4"><div className="flex items-center justify-between px-1"><div><h2 className="text-base sm:text-lg font-semibold text-[#1f1b17]">Findings from ScanEx</h2><p className="text-xs sm:text-sm text-[#717971]">Values and metadata below are taken directly from the scan responses.</p></div>{resolvedIds.size > 0 && <button onClick={onResetAll} className="text-xs text-[#717971] hover:text-[#292524] flex items-center gap-1 cursor-pointer"><RotateCcw className="w-3 h-3" />Reset local review</button>}</div><div className="flex items-center gap-2 px-1">{filterButtons.map((btn) => <button key={btn.label} onClick={() => setPriorityFilter(btn.value)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${priorityFilter === btn.value ? 'bg-[#316342] text-white border-[#316342]' : 'bg-white text-[#57534e] border-[#e7e5e4] hover:border-[#316342]'}`}>{btn.label}</button>)}</div><div className="space-y-4">{filtered.map((finding) => { const resolved = resolvedIds.has(finding.id); return <div key={finding.id} className={`bg-white border rounded-2xl p-5 sm:p-6 shadow-xs ${resolved ? 'border-[#bbf7d0] bg-[#fafdfa]' : 'border-[#e7e5e4]'}`}><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#f5f5f4]"><div className="flex items-start gap-3"><div className="w-8 h-8 rounded-lg bg-[#fafaf9] border border-[#e7e5e4] flex items-center justify-center">{finding.fileName.match(/\.(jpg|jpeg|png|heic)$/i) ? <FileImage className="w-4 h-4 text-amber-700" /> : <FileText className="w-4 h-4 text-rose-700" />}</div><div><div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-semibold font-mono text-[#1f1b17]">{finding.fileName}</span><span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#fcf2eb] text-[#854d0e] border border-[#f0e6e0]">{finding.kind}</span><span className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${PRIORITY_BADGE[finding.priority]}`}>{finding.priority}</span></div><p className="text-xs text-[#717971] mt-0.5">{finding.source}{finding.confidence !== undefined ? ` · ${Math.round(finding.confidence * 100)}% confidence` : ''}</p></div></div><button onClick={() => onToggleResolve(finding.id)} className={`px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer ${resolved ? 'bg-[#e8f5e9] text-[#166534] border border-[#bbf7d0]' : 'bg-white text-[#292524] border border-[#e7e5e4] hover:border-[#316342]'}`}>{resolved ? 'Reviewed locally' : 'Mark reviewed locally'}</button></div><div className="mt-4 bg-[#fafaf9] border border-[#e7e5e4] rounded-xl p-4 text-xs sm:text-sm text-[#57534e] leading-relaxed break-words">{finding.detail}</div></div>; })}{filtered.length === 0 && <div className="bg-white border border-[#e7e5e4] rounded-2xl p-10 text-center text-sm text-[#717971]">{priorityFilter ? `No ${priorityFilter}-priority findings.` : 'No findings were returned by the backend.'}</div>}</div></div>
 

@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models import ScanMetadata, ScanResponse
 from app.scan import scan_bytes, sniff_content_type, sniff_type, warm_analyzer
 from app.adversarial_router import router as adversarial_router
+from app.mosaic_router import router as mosaic_router
 
 LOGGER = logging.getLogger(__name__)
 BASELINE_SCAN_TIMEOUT_SECONDS = float(os.getenv("BASELINE_SCAN_TIMEOUT_SECONDS", "30.0"))
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0", lifespan=lifespan)
 app.include_router(adversarial_router)
+app.include_router(mosaic_router)
 MAX_UPLOAD_SIZE = 25 * 1024 * 1024
 
 _cors_origins = {"http://localhost:5173", "http://localhost:3000"}

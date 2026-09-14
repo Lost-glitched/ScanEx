@@ -1,4 +1,4 @@
-import type { AdversarialResponse, ScanResponse } from '../types';
+import type { AdversarialResponse, MosaicFilePayload, MosaicResult, ScanResponse } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
@@ -49,4 +49,32 @@ export function scanBaseline(file: File): Promise<ScanResponse> {
 
 export function scanAdversarial(file: File): Promise<AdversarialResponse> {
   return postScan<AdversarialResponse>('/scan/adversarial', file);
+}
+
+export async function scanMosaic(files: MosaicFilePayload[]): Promise<MosaicResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/scan/mosaic`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ files }),
+    });
+  } catch {
+    throw new ScanClientError('The ScanEx backend could not be reached. Start it on port 8000 and try again.');
+  }
+
+  if (!response.ok) {
+    let detail = `Mosaic scan failed with HTTP ${response.status}.`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = payload.detail || detail;
+    } catch {
+      // Preserve status-based message if server did not return JSON
+    }
+    throw new ScanClientError(detail, response.status);
+  }
+
+  return (await response.json()) as MosaicResult;
 }
