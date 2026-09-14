@@ -4,6 +4,7 @@
 """FastAPI entrypoint for ExposureScan Layer A."""
 
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import os
 from typing import Any
@@ -13,11 +14,30 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import ScanMetadata, ScanResponse
-from app.scan import scan_bytes, sniff_content_type, sniff_type
+from app.scan import scan_bytes, sniff_content_type, sniff_type, warm_analyzer
 from app.adversarial_router import router as adversarial_router
 
 LOGGER = logging.getLogger(__name__)
-app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0")
+BASELINE_SCAN_TIMEOUT_SECONDS = float(os.getenv("BASELINE_SCAN_TIMEOUT_SECONDS", "30.0"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-warm the Presidio analyzer and spaCy model in background during server startup."""
+
+    def _warm() -> None:
+        try:
+            LOGGER.info("Pre-warming Presidio analyzer and spaCy model...")
+            warm_analyzer()
+            LOGGER.info("Presidio analyzer ready.")
+        except Exception:
+            LOGGER.exception("Failed to pre-warm analyzer during startup.")
+
+    asyncio.create_task(asyncio.to_thread(_warm))
+    yield
+
+
+app = FastAPI(title="ExposureScan Baseline Forensic Scan", version="1.0.0", lifespan=lifespan)
 app.include_router(adversarial_router)
 MAX_UPLOAD_SIZE = 25 * 1024 * 1024
 
@@ -55,7 +75,7 @@ def _error_response(filename: str, file_type: str, message: str) -> ScanResponse
 
 @app.post("/scan/baseline", response_model=ScanResponse)
 async def baseline_scan(file: UploadFile = File(...)) -> ScanResponse | Any:
-    """Extract metadata and PII from one uploaded supported file within ten seconds."""
+    """Extract metadata and PII from one uploaded supported file within the configured timeout."""
 
     filename = file.filename or "unnamed"
     content = await file.read()
@@ -70,10 +90,10 @@ async def baseline_scan(file: UploadFile = File(...)) -> ScanResponse | Any:
             raise HTTPException(status_code=415, detail="File content does not match its extension or supported container type.")
         return _error_response(filename, extension_type, "The file is corrupted, empty, or cannot be parsed as the declared supported type.")
     try:
-        return await asyncio.wait_for(asyncio.to_thread(scan_bytes, content, filename), timeout=10.0)
+        return await asyncio.wait_for(asyncio.to_thread(scan_bytes, content, filename), timeout=BASELINE_SCAN_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         LOGGER.exception("Baseline scan timed out for %s", filename)
-        return _error_response(filename, detected_type, "Baseline scan timed out after 10 seconds.")
+        return _error_response(filename, detected_type, f"Baseline scan timed out after {int(BASELINE_SCAN_TIMEOUT_SECONDS)} seconds.")
     except Exception as exc:
         LOGGER.exception("Baseline scan failed for %s", filename)
         return _error_response(filename, detected_type, "The file could not be fully processed; a partial result was not available.")

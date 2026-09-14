@@ -302,3 +302,41 @@ def test_mask_shape() -> None:
     """Display masking retains only the final four digits."""
 
     assert mask_financial_text("1234 5678 9012") == "XXXX XXXX 9012"
+
+
+def test_priority_for_entity_mapping() -> None:
+    """Entity types map to the correct priority level."""
+
+    from app.priority import priority_for_entity
+
+    assert priority_for_entity("FIN_PAN_CARD") == "high"
+    assert priority_for_entity("CREDIT_CARD") == "high"
+    assert priority_for_entity("US_SSN") == "high"
+    assert priority_for_entity("EMAIL_ADDRESS") == "medium"
+    assert priority_for_entity("PHONE_NUMBER") == "medium"
+    assert priority_for_entity("PERSON") == "low"
+    assert priority_for_entity("ORG") == "low"
+
+
+def test_priority_bank_account_is_high() -> None:
+    """A bank account finding has high priority and overall_priority reflects it."""
+
+    response = client.post("/scan/baseline", files={"file": ("account.docx", _docx_bytes("HDFC account 123456789012"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    body = response.json()
+    bank_findings = [item for item in body["financial_findings"] if item["entity_type"] == "FIN_BANK_ACCOUNT_NUMBER"]
+    assert bank_findings
+    assert all(item["priority"] == "high" for item in bank_findings)
+    assert body["overall_priority"] == "high"
+
+
+def test_priority_plain_name_is_low() -> None:
+    """A plain name finding has low priority and overall_priority stays low."""
+
+    response = client.post("/scan/baseline", files={"file": ("names.docx", _docx_bytes("John Smith wrote the report"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert response.status_code == 200
+    body = response.json()
+    person_findings = [item for item in body["pii_findings"] if item["entity_type"] == "PERSON"]
+    if person_findings:
+        assert all(item["priority"] == "low" for item in person_findings)
+    assert body["overall_priority"] == "low"

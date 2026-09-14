@@ -2,6 +2,7 @@ export type TabType = 'upload' | 'pipeline' | 'audit';
 
 export type FileCategory = 'image' | 'pdf' | 'doc';
 export type FileStatus = 'ready' | 'scanning' | 'complete' | 'error';
+export type Priority = 'low' | 'medium' | 'high';
 
 export interface ScanMetadata {
   gps: { lat?: number; lon?: number } | null;
@@ -16,6 +17,7 @@ export interface Finding {
   entity_type: string;
   text: string;
   confidence: number;
+  priority: Priority;
 }
 
 export interface RedactionFailure {
@@ -31,6 +33,7 @@ export interface ScanResponse {
   financial_findings: Finding[];
   redaction_failures: RedactionFailure[];
   severity_flags: string[];
+  overall_priority: Priority;
   error: string | null;
 }
 

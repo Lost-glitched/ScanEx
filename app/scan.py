@@ -14,6 +14,7 @@ from presidio_analyzer.nlp_engine import SpacyNlpEngine
 
 from app.extractors import docx, image, pdf, pptx, xlsx
 from app.models import ExtractionResult, Finding, ScanResponse
+from app.priority import PRIORITY_ORDER, max_priority, priority_for_entity
 from app.recognizers.financial import build_financial_recognizers
 
 
@@ -73,6 +74,12 @@ def _analyzer() -> AnalyzerEngine:
     return _ANALYZER
 
 
+def warm_analyzer() -> AnalyzerEngine:
+    """Pre-load the spaCy model and Presidio recognizers into memory."""
+
+    return _analyzer()
+
+
 def _financial_entity_type(text: str) -> str | None:
     """Return the custom financial entity matching an analyzer finding."""
 
@@ -97,14 +104,15 @@ def _findings(result: ExtractionResult) -> tuple[list[Finding], list[Finding]]:
     pii: list[Finding] = []
     financial: list[Finding] = []
     for item in analyzer_results:
-        finding = Finding(entity_type=item.entity_type, text=result.text[item.start:item.end], confidence=float(item.score))
+        priority = priority_for_entity(item.entity_type)
+        finding = Finding(entity_type=item.entity_type, text=result.text[item.start:item.end], confidence=float(item.score), priority=priority)
         financial_entity = _financial_entity_type(finding.text)
         if financial_entity:
             if financial_entity == "FIN_BANK_ACCOUNT_NUMBER":
                 nearby = result.text[max(0, item.start - 40):min(len(result.text), item.end + 40)]
                 if not re.search(r"\b(?:account|a/c|iban|bank|hdfc|icici|sbi|axis|kotak)\b", nearby, re.IGNORECASE):
                     continue
-            financial.append(finding.model_copy(update={"entity_type": financial_entity}))
+            financial.append(finding.model_copy(update={"entity_type": financial_entity, "priority": "high"}))
         else:
             pii.append(finding)
     cards = [item for item in analyzer_results if item.entity_type == "CREDIT_CARD"]
@@ -112,7 +120,9 @@ def _findings(result: ExtractionResult) -> tuple[list[Finding], list[Finding]]:
         nearby = result.text[max(0, card.end - 8):min(len(result.text), card.end + 8)]
         match = re.search(r"(?:cvv|cvc|security\s+code)\D{0,5}(\d{3,4})", nearby, re.IGNORECASE)
         if match:
-            financial.append(Finding(entity_type="FIN_CVV_NEAR_CARD", text=match.group(1), confidence=0.9))
+            financial.append(Finding(entity_type="FIN_CVV_NEAR_CARD", text=match.group(1), confidence=0.9, priority="high"))
+    pii.sort(key=lambda f: PRIORITY_ORDER[f.priority])
+    financial.sort(key=lambda f: PRIORITY_ORDER[f.priority])
     return pii, financial
 
 
@@ -140,5 +150,11 @@ def scan_bytes(content: bytes, filename: str) -> ScanResponse:
     result = extractor(content)
     pii, financial = _findings(result)
     severity_flags = list(dict.fromkeys(result.severity_flags + (["financial"] if financial else [])))
+    all_priorities = [f.priority for f in pii + financial]
+    if result.redaction_failures:
+        all_priorities.append("high")
+    if result.metadata.gps:
+        all_priorities.append("medium")
+    overall_priority = max_priority(*all_priorities) if all_priorities else "low"
     public_financial = [finding.model_copy(update={"text": mask_financial_text(finding.text)}) for finding in financial]
-    return ScanResponse(filename=filename, file_type=file_type, metadata=result.metadata, pii_findings=pii, financial_findings=public_financial, redaction_failures=result.redaction_failures, severity_flags=severity_flags)
+    return ScanResponse(filename=filename, file_type=file_type, metadata=result.metadata, pii_findings=pii, financial_findings=public_financial, redaction_failures=result.redaction_failures, severity_flags=severity_flags, overall_priority=overall_priority)

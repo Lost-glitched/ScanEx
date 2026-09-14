@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.priority import Priority
+
 
 class Finding(BaseModel):
     """A detected entity and its analyzer confidence."""
@@ -14,6 +16,7 @@ class Finding(BaseModel):
     entity_type: str
     text: str
     confidence: float
+    priority: Priority
 
 
 class RedactionFailure(BaseModel):
@@ -44,6 +47,7 @@ class ScanResponse(BaseModel):
     financial_findings: list[Finding]
     redaction_failures: list[RedactionFailure]
     severity_flags: list[str]
+    overall_priority: Priority = "low"
     error: str | None = None
 
 
