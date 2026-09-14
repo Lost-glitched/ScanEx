@@ -1,0 +1,6 @@
+# Arnav Sahu
+# 24BCE2976
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
