@@ -40,3 +40,5 @@ frontend/.env.*.local
 uploads/
 tmp/
 temp/
+CONTEXT_TRANSFER.md
+context_transfer.md
